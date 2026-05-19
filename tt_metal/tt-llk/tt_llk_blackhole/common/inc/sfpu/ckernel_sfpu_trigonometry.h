@@ -138,13 +138,14 @@ inline void _calculate_acosh_()
     for (int d = 0; d < ITERATIONS; d++)
     {
         sfpi::vFloat inp = sfpi::dst_reg[0];
+        sfpi::vFloat res;
         v_if (inp < sfpi::vConst1)
         {
-            sfpi::dst_reg[0] = std::numeric_limits<float>::quiet_NaN();
+            res = std::numeric_limits<float>::quiet_NaN();
         }
         v_elseif (inp == sfpi::vConst1)
         {
-            sfpi::dst_reg[0] = sfpi::vConst0;
+            res = sfpi::vConst0;
         }
         v_else
         {
@@ -152,9 +153,10 @@ inline void _calculate_acosh_()
             tmp              = tmp - sfpi::vConst1;
             tmp              = _calculate_sqrt_body_<APPROXIMATION_MODE>(tmp);
             tmp              = tmp + inp;
-            sfpi::dst_reg[0] = _calculate_log_body_no_init_(tmp);
+            res              = _calculate_log_body_no_init_(tmp);
         }
         v_endif;
+        sfpi::dst_reg[0] = res;
         sfpi::dst_reg++;
     }
 }

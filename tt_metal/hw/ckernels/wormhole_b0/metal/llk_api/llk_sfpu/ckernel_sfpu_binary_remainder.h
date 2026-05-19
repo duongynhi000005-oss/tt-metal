@@ -65,10 +65,11 @@ sfpi_inline sfpi::vInt compute_unsigned_remainder_int32(const sfpi::vInt& a_sign
 
     // Split q and b into 11-bit chunks to compute q * b
     sfpi::vUInt MASK_11 = 0x7ff;
-    sfpi::vFloat q1 = int32_to_float(q & MASK_11, sfpi::RoundMode::NearestEven);
-    sfpi::vFloat q2 = int32_to_float(q >> 11, sfpi::RoundMode::NearestEven);
-    sfpi::vFloat b1 = int32_to_float((b >> 11) & MASK_11, sfpi::RoundMode::NearestEven);
-    sfpi::vFloat b0 = int32_to_float(b & MASK_11, sfpi::RoundMode::NearestEven);
+    sfpi::vFloat q1 = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(q & MASK_11), sfpi::RoundMode::NearestEven);
+    sfpi::vFloat q2 = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(q >> 11), sfpi::RoundMode::NearestEven);
+    sfpi::vFloat b1 =
+        sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>((b >> 11) & MASK_11), sfpi::RoundMode::NearestEven);
+    sfpi::vFloat b0 = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(b & MASK_11), sfpi::RoundMode::NearestEven);
 
     // hi = q2 * b0 + q1 * b1 (high part)
     // lo = q1 * b0 (low part)
@@ -93,8 +94,8 @@ sfpi_inline sfpi::vInt compute_unsigned_remainder_int32(const sfpi::vInt& a_sign
 
     // Recompute b chunks for correction multiplication to reduce register pressure
     b = sfpi::abs(b_signed);
-    b0 = int32_to_float(b & MASK_11, sfpi::RoundMode::NearestEven);
-    b1 = int32_to_float((b >> 11) & MASK_11, sfpi::RoundMode::NearestEven);
+    b0 = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(b & MASK_11), sfpi::RoundMode::NearestEven);
+    b1 = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>((b >> 11) & MASK_11), sfpi::RoundMode::NearestEven);
     sfpi::vFloat b2 = sfpi::int32_to_float(b >> 22, sfpi::RoundMode::NearestEven);
 
     // tmp = correction * (b2<<22 + b1<<11 + b0)

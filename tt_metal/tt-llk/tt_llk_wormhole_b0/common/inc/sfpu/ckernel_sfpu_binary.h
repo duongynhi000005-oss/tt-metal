@@ -39,12 +39,12 @@ sfpi_inline sfpi::vFloat _calculate_sfpu_binary_power_(sfpi::vFloat base, sfpi::
 
     // Convert exponent to float
     sfpi::vInt exp = exexp(base);
-    v_if (exp < 0)
+    v_if (exp < 0) // FIXME: 2c->SM
     {
         exp = sfpi::setsgn(~exp + 1, 1);
     }
     v_endif;
-    sfpi::vFloat expf = int32_to_float(exp, sfpi::RoundMode::NearestEven);
+    sfpi::vFloat expf = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(exp), sfpi::RoundMode::NearestEven);
 
     // De-normalize to original range
     sfpi::vFloat vConstLn2  = 0.692871f;

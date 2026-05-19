@@ -25,8 +25,7 @@ sfpi_inline void calculate_div_int32_body(
     // complement integers.
 
     // Equivalent to: sfpi::vUInt b = sfpi::dst_reg[dst_index_in1 * dst_tile_size_sfpi];
-    sfpi::vUInt b = __builtin_rvtt_sfpload(
-        sfpi::dst_reg[dst_index_in1 * dst_tile_size_sfpi].get(), 4, sfpi::SFPLOAD_ADDR_MODE_NOINC);
+    sfpi::vUInt b = sfpi::dst_reg[dst_index_in1 * dst_tile_size_sfpi];
 
     // When converting to float, integers are treated as sign-magnitude.
     // Convert inputs to positive values to avoid conversion problems; the
@@ -93,10 +92,11 @@ sfpi_inline void calculate_div_int32_body(
     // Now q2 = q>>22, q1 = q>>11
     // And so qb = (q2<<22 + q1<<11) * (b2<<22 + b1<<11 + b0)
     //           = (q2<<22 * b0) + (q1<<11 * b1<<11) + (q1<<11 * b0)
-    sfpi::vFloat q1 = int32_to_float(q & MASK_11, sfpi::RoundMode::NearestEven);
-    sfpi::vFloat q2 = int32_to_float(q >> 11, sfpi::RoundMode::NearestEven);
-    sfpi::vFloat b1 = int32_to_float((b >> 11) & MASK_11, sfpi::RoundMode::NearestEven);
-    sfpi::vFloat b0 = int32_to_float(b & MASK_11, sfpi::RoundMode::NearestEven);
+    sfpi::vFloat q1 = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(q & MASK_11), sfpi::RoundMode::NearestEven);
+    sfpi::vFloat q2 = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(q >> 11), sfpi::RoundMode::NearestEven);
+    sfpi::vFloat b1 =
+        sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>((b >> 11) & MASK_11), sfpi::RoundMode::NearestEven);
+    sfpi::vFloat b0 = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(b & MASK_11), sfpi::RoundMode::NearestEven);
     q = q << 11;
 
     sfpi::vFloat MANTISSA_ALIGNMENT_OFFSET = 8388608.0f;
@@ -117,9 +117,9 @@ sfpi_inline void calculate_div_int32_body(
 
     // Compute correction value in float32.
     sfpi::vFloat correction_f = r_f * inv_b_f;
-    sfpi::vFloat b2 = sfpi::int32_to_float(b >> 22, sfpi::RoundMode::NearestEven);
-    sfpi::vInt correction = sfpi::float_to_uint16(correction_f, sfpi::RoundMode::NearestEven);
-    correction_f = sfpi::int32_to_float(correction, sfpi::RoundMode::NearestEven);
+    sfpi::vFloat b2 = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(b >> 22), sfpi::RoundMode::NearestEven);
+    auto correction = sfpi::convert<sfpi::vUInt16>(correction_f, sfpi::RoundMode::NearestEven);
+    correction_f = sfpi::convert<sfpi::vFloat>(sfpi::as<sfpi::vSMag>(correction), sfpi::RoundMode::NearestEven);
 
     // correction should fit into 11 bits, thus:
     // tmp = correction * (b2<<22 + b1<<11 + b0)
