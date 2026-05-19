@@ -7,6 +7,7 @@
 #include <tt-metalium/constants.hpp>
 #include <tt-metalium/host_api.hpp>
 #include <tt-metalium/tensor_accessor_args.hpp>
+#include <ttnn/tensor/tensor_spec.hpp>
 
 namespace ttnn::operations::data_movement::transpose {
 
@@ -198,6 +199,76 @@ void refresh_transpose_common_runtime_args(
     auto& writer_args = GetCommonRuntimeArgs(program, writer_kernel_id);
     copy_transpose_common_runtime_args(input_buffer, std::span<std::uint32_t>(reader_args.data(), reader_args.size()));
     copy_transpose_common_runtime_args(output_buffer, std::span<std::uint32_t>(writer_args.data(), writer_args.size()));
+}
+
+TransposedShapes transposed_shapes(const Tensor& input_tensor, ttnn::prim::TransposeOpDim dim) {
+    auto output_shape = input_tensor.logical_shape();
+    auto output_padded_shape = input_tensor.padded_shape();
+    switch (dim) {
+        case ttnn::prim::TransposeOpDim::CN:
+            std::swap(output_shape[0], output_shape[1]);
+            std::swap(output_padded_shape[0], output_padded_shape[1]);
+            break;
+        case ttnn::prim::TransposeOpDim::HC:
+            if (input_tensor.layout() == Layout::ROW_MAJOR) {
+                std::swap(output_shape[1], output_shape[2]);
+                std::swap(output_padded_shape[1], output_padded_shape[2]);
+            } else {
+                const uint32_t C = output_shape[1];
+                const uint32_t C_p = tt::round_up(C, input_tensor.tensor_spec().tile().get_height());
+                const uint32_t H = output_shape[2];
+                output_shape[1] = H;
+                output_shape[2] = C;
+                output_padded_shape[1] = H;
+                output_padded_shape[2] = C_p;
+            }
+            break;
+        case ttnn::prim::TransposeOpDim::WH:
+            std::swap(output_shape[2], output_shape[3]);
+            std::swap(output_padded_shape[2], output_padded_shape[3]);
+            break;
+        default: TT_THROW("Unsupported transpose dim"); break;
+    }
+    return {output_shape, output_padded_shape};
+}
+
+MemoryConfig derive_effective_output_memory_config(
+    const Tensor& input_tensor, ttnn::prim::TransposeOpDim dim, const MemoryConfig& requested_output_mem_config) {
+    auto output_mem_config = requested_output_mem_config;
+    if (!output_mem_config.is_sharded() || output_mem_config.shard_spec().has_value()) {
+        return output_mem_config;
+    }
+    const auto shapes = transposed_shapes(input_tensor, dim);
+    if (input_tensor.is_sharded() && input_tensor.shard_spec().has_value() &&
+        input_tensor.memory_config().memory_layout() == output_mem_config.memory_layout()) {
+        auto adjusted =
+            adjust_shard_spec_to_shape(input_tensor.shard_spec().value(), input_tensor.padded_shape(), shapes.padded);
+        if (adjusted.has_value()) {
+            const bool tile_layout = input_tensor.layout() == Layout::TILE;
+            const bool tile_aligned = adjusted->shape[0] % tt::constants::TILE_HEIGHT == 0 &&
+                                      adjusted->shape[1] % tt::constants::TILE_WIDTH == 0;
+            if (!tile_layout || tile_aligned) {
+                return output_mem_config.with_shard_spec(std::move(adjusted));
+            }
+        }
+    }
+    // Synth shape: TILE uses tile-padded logical; RM uses logical (output's physical-shard
+    // alignment is the synthesized shard width — see RowMajorPageConfig::create_default_alignment).
+    // We must NOT use shapes.padded here: it inherits the input's shard-width rounding, which
+    // for irregular RM-sharded inputs (e.g. 65×97 with shard_w=25 → padded W=100) yields a shard
+    // height that doesn't match the actual output physical height (97).
+    ttnn::Shape synth_shape = shapes.logical;
+    if (input_tensor.layout() == Layout::TILE) {
+        const int r = static_cast<int>(synth_shape.rank());
+        if (r >= 2) {
+            synth_shape[r - 2] = tt::round_up(synth_shape[r - 2], tt::constants::TILE_HEIGHT);
+        }
+        if (r >= 1) {
+            synth_shape[r - 1] = tt::round_up(synth_shape[r - 1], tt::constants::TILE_WIDTH);
+        }
+    }
+    auto shard_spec = generate_transpose_shard_spec(input_tensor, synth_shape, output_mem_config.memory_layout());
+    return output_mem_config.with_shard_spec(shard_spec);
 }
 
 }  // namespace ttnn::operations::data_movement::transpose
