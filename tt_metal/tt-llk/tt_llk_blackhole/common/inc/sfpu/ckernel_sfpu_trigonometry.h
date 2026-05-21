@@ -92,7 +92,7 @@ inline void _calculate_sine_(const int iterations)
         v                          = v - whole_v_float;
         v *= 3.141592653589793f; // fractional * pi to get it in [-pi:pi]
         v       = _sfpu_sine_maclaurin_series_<APPROXIMATION_MODE>(v);
-        v_if ((sfpi::as<sfpi::vUInt>(whole_v) & 1) != 0)
+        v_if ((whole_v & 1) != 0)
         {
             // odd so flip the sign
             v *= -1;
@@ -118,7 +118,7 @@ inline void _calculate_cosine_(const int iterations)
         v                          = v - whole_v_float;
         v *= 3.141592653589793f; // fractional * pi to get it in [-pi:pi]
         v       = _sfpu_cosine_maclaurin_series_<APPROXIMATION_MODE>(v);
-        v_if ((sfpi::as<vUInt>(whole_v) & 1) != 0)
+        v_if ((whole_v & 1) != 0)
         {
             // odd so flip the sign
             v *= -1;
