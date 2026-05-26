@@ -31,9 +31,9 @@ ProgramDescriptor MatmulMultiCoreReuseProgramFactory::create_descriptor(
     TT_FATAL(operation_attributes.bcast_batch.has_value(), "Error: bcast_batch field should have been populated");
     bool bcast_batch = operation_attributes.bcast_batch.value();
 
-    const auto& a = tensor_args.input_tensors.at(0);
-    const auto& b = tensor_args.input_tensors.at(1);
-    const auto& output = tensor_return_value.at(0);
+    const auto& a = tensor_args.input_tensors.at(0).mesh_tensor();
+    const auto& b = tensor_args.input_tensors.at(1).mesh_tensor();
+    const auto& output = tensor_return_value.at(0).mesh_tensor();
     const auto& ashape = a.padded_shape();
     const auto& bshape = b.padded_shape();
 
@@ -41,9 +41,6 @@ ProgramDescriptor MatmulMultiCoreReuseProgramFactory::create_descriptor(
     tt::DataFormat in1_cb_data_format = tt_metal::datatype_to_dataformat_converter(b.dtype());
     tt::DataFormat out_cb_data_format = tt_metal::datatype_to_dataformat_converter(output.dtype());
     MathFidelity math_fidelity = MathFidelity::HiFi4;
-
-    tt_metal::Buffer* in0_buffer = a.buffer();
-    tt_metal::Buffer* in1_buffer = b.buffer();
 
     ////////////////////////////////////////////////////////////////////////////
     //                      Matmul Parameters Setup
@@ -64,7 +61,7 @@ ProgramDescriptor MatmulMultiCoreReuseProgramFactory::create_descriptor(
     TT_FATAL(Nt % per_core_N == 0, "Nt ({}) must be divisible by per_core_N ({})", Nt, per_core_N);
     TT_FATAL(Kt % in0_block_w == 0, "Kt ({}) must be divisible by in0_block_w ({})", Kt, in0_block_w);
 
-    tt_metal::IDevice* device = a.device();
+    tt_metal::IDevice* device = &a.device_mut();
     auto compute_with_storage_grid_size = device->compute_with_storage_grid_size();
     uint32_t num_cores_x = compute_with_storage_grid_size.x;
     uint32_t num_cores_y = compute_with_storage_grid_size.y;
@@ -79,8 +76,6 @@ ProgramDescriptor MatmulMultiCoreReuseProgramFactory::create_descriptor(
     ////////////////////////////////////////////////////////////////////////////
     //                      Grayskull Device Setup
     ////////////////////////////////////////////////////////////////////////////
-    tt_metal::Buffer* out_buffer = output.buffer();
-    TT_FATAL(out_buffer != nullptr, "Output buffer should be allocated on device!");
 
     ////////////////////////////////////////////////////////////////////////////
     //                      Application Setup
@@ -180,11 +175,11 @@ ProgramDescriptor MatmulMultiCoreReuseProgramFactory::create_descriptor(
     });
 
     std::vector<uint32_t> reader_compile_time_args = {};
-    tt::tt_metal::TensorAccessorArgs(*in0_buffer).append_to(reader_compile_time_args);
-    tt::tt_metal::TensorAccessorArgs(*in1_buffer).append_to(reader_compile_time_args);
+    tt::tt_metal::TensorAccessorArgs(a).append_to(reader_compile_time_args);
+    tt::tt_metal::TensorAccessorArgs(b).append_to(reader_compile_time_args);
 
     std::vector<uint32_t> writer_compile_time_args = {};
-    tt::tt_metal::TensorAccessorArgs(*out_buffer).append_to(writer_compile_time_args);
+    tt::tt_metal::TensorAccessorArgs(output).append_to(writer_compile_time_args);
 
     // Create reader and writer kernels per core
     KernelDescriptor reader_desc;
@@ -228,7 +223,7 @@ ProgramDescriptor MatmulMultiCoreReuseProgramFactory::create_descriptor(
             reader_desc.emplace_runtime_args(
                 core,
                 {
-                    in0_buffer,                                     // in0_tensor_addr
+                    a,                                              // in0_tensor_addr
                     (std::uint32_t)Kt * per_core_M * output_idx_y,  // in0_tensor_start_tile_id
                     (std::uint32_t)1,                               // in0_tensor_stride_w
                     (std::uint32_t)Kt,                              // in0_tensor_stride_h
@@ -238,7 +233,7 @@ ProgramDescriptor MatmulMultiCoreReuseProgramFactory::create_descriptor(
                     (std::uint32_t)per_core_M,                // in0_block_h
                     (std::uint32_t)in0_block_w * per_core_M,  // in0_block_num_tiles
 
-                    in1_buffer,                                // in1_tensor_addr
+                    b,                                         // in1_tensor_addr
                     (std::uint32_t)per_core_N * output_idx_x,  // in1_tensor_start_tile_id
                     (std::uint32_t)1,                          // in1_tensor_stride_w
                     (std::uint32_t)Nt,                         // in1_tensor_stride_h
@@ -259,7 +254,7 @@ ProgramDescriptor MatmulMultiCoreReuseProgramFactory::create_descriptor(
             writer_desc.emplace_runtime_args(
                 core,
                 {
-                    out_buffer,  // out_tensor_addr
+                    output,  // out_tensor_addr
                     ((std::uint32_t)output_idx_x * per_core_N) +
                         (output_idx_y * per_core_M * Nt),  // out_tensor_start_tile_id
                     (std::uint32_t)1,                      // out_tensor_stride_w
