@@ -70,9 +70,6 @@ const map<std::string, std::map<std::string, std::string>> sfpu_op_to_op_name = 
 //                     both the init call and the op call. LHS at DST[0], RHS at
 //                     DST[1], result written to DST[2] for the packer.
 //
-// Both WH/BH and Quasar use eltwise_sfpu.cpp with SFPU_BINARY_OP=1;
-// #ifdef ARCH_QUASAR inside that file selects the two code paths.
-//
 // To add a new binary SFPU op: add an entry here, add a matching arm in
 // sfpu_binary_function() for the golden compute, and (if its valid input
 // range differs from div) add an arm in generate_packed_sfpu_binary_inputs().
@@ -245,7 +242,8 @@ experimental::metal2_host_api::KernelSpec make_writer_unary_quasar_spec(const ch
     return {
         .unique_id = kernel_id,
         .source =
-            experimental::metal2_host_api::KernelSpec::SourceFilePath{"tt_metal/kernels/dataflow/writer_unary.cpp"},
+            experimental::metal2_host_api::KernelSpec::SourceFilePath{
+                "tests/tt_metal/tt_metal/test_kernels/dataflow/writer_unary_2_0.cpp"},
         .num_threads = 1,
         .dfb_bindings = {{
             .dfb_spec_name = out_dfb_id,
@@ -268,7 +266,7 @@ experimental::metal2_host_api::KernelSpec make_reader_binary_quasar_spec(
         .unique_id = kernel_id,
         .source =
             experimental::metal2_host_api::KernelSpec::SourceFilePath{
-                "tests/tt_metal/tt_metal/test_kernels/dataflow/reader_binary.cpp"},
+                "tests/tt_metal/tt_metal/test_kernels/dataflow/reader_binary_2_0.cpp"},
         .num_threads = 1,
         .dfb_bindings =
             {{
@@ -369,6 +367,7 @@ bool run_sfpu_all_same_buffer(
     std::vector<uint32_t> packed_golden = pack_vector<uint32_t, bfloat16>(golden);
 
     std::map<std::string, std::string> sfpu_defines = sfpu_util::sfpu_op_to_op_name.at(test_config.sfpu_op);
+    sfpu_defines["SFPU_UNARY_OP"] = "1";
     sfpu_defines["SFPU_OP_EXP_INCLUDE"] = "1";
     sfpu_defines["SFPU_OP_GELU_INCLUDE"] = "1";
     sfpu_defines["SFPU_OP_RECIP_INCLUDE"] = "1";
@@ -391,7 +390,8 @@ bool run_sfpu_all_same_buffer(
         experimental::metal2_host_api::KernelSpec reader_spec{
             .unique_id = READER,
             .source =
-                experimental::metal2_host_api::KernelSpec::SourceFilePath{"tt_metal/kernels/dataflow/reader_unary.cpp"},
+                experimental::metal2_host_api::KernelSpec::SourceFilePath{
+                    "tests/tt_metal/tt_metal/test_kernels/dataflow/reader_unary_2_0.cpp"},
             .num_threads = 1,
             .dfb_bindings = {{
                 .dfb_spec_name = IN_DFB,
@@ -409,7 +409,8 @@ bool run_sfpu_all_same_buffer(
         experimental::metal2_host_api::KernelSpec compute_spec{
             .unique_id = COMPUTE,
             .source =
-                experimental::metal2_host_api::KernelSpec::SourceFilePath{"tt_metal/kernels/compute/eltwise_sfpu.cpp"},
+                experimental::metal2_host_api::KernelSpec::SourceFilePath{
+                    "tests/tt_metal/tt_metal/test_kernels/compute/eltwise_sfpu_2_0.cpp"},
             .num_threads = 1,
             .compiler_options = {.defines = to_kernel_defines(sfpu_defines)},
             .dfb_bindings =
@@ -590,7 +591,8 @@ bool run_sfpu_binary_two_input_buffer(
         experimental::metal2_host_api::KernelSpec compute_spec{
             .unique_id = COMPUTE,
             .source =
-                experimental::metal2_host_api::KernelSpec::SourceFilePath{"tt_metal/kernels/compute/eltwise_sfpu.cpp"},
+                experimental::metal2_host_api::KernelSpec::SourceFilePath{
+                    "tests/tt_metal/tt_metal/test_kernels/compute/eltwise_sfpu_2_0.cpp"},
             .num_threads = 1,
             .compiler_options = {.defines = to_kernel_defines(sfpu_defines)},
             .dfb_bindings =
