@@ -25,7 +25,7 @@ _SKU_ALIASES = {
     "bh_p300": {"bh_p300", "p300"},
     "bh_loudbox": {"bh_loudbox", "p150x8"},
     "bh_quietbox_2": {"bh_quietbox_2", "p300x2"},
-    "bh_galaxy_perf": {"bh_galaxy_perf"},
+    "bh_galaxy_perf": {"bh_galaxy_perf", "bhglx"},
     "blackhole": {"blackhole", "bh"},
 }
 
