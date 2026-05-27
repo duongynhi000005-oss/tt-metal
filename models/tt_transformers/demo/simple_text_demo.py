@@ -1476,7 +1476,6 @@ def test_demo_text(
         )
         targets = {}
     else:
-        target_decode_tok_s_u =
         targets = {
             "prefill_t/s": resolved_perf_targets.get("prefill_t/s"),
             "decode_t/s":  resolved_perf_targets.get("decode_t/s"),
