@@ -1524,7 +1524,7 @@ def export_results_to_markdown(output_entries, stdscr):
         # display generated markdown report using less
         # Save current terminal state
         curses.def_prog_mode()
-        # Exit curses temporaril
+        # Exit curses temporarily
         curses.endwin()
         # Run less command
         os.system(f"less -R {report_path}")
