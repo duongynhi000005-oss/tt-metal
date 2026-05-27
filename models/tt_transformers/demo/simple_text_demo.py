@@ -1476,11 +1476,11 @@ def test_demo_text(
         )
         targets = {}
     else:
-        target_decode_tok_s_u = resolved_perf_targets.get("decode_t/s/u")
+        target_decode_tok_s_u = 
         targets = {
             "prefill_t/s": resolved_perf_targets.get("prefill_t/s"),
-            "decode_t/s": target_decode_tok_s_u * global_batch_size if target_decode_tok_s_u is not None else None,
-            "decode_t/s/u": target_decode_tok_s_u,
+            "decode_t/s":  resolved_perf_targets.get("decode_t/s"),
+            "decode_t/s/u": resolved_perf_targets.get("decode_t/s/u"),
         }
 
     # Save benchmark data for CI dashboard
