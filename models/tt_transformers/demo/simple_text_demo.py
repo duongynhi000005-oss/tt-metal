@@ -1478,7 +1478,7 @@ def test_demo_text(
     else:
         targets = {
             "prefill_t/s": resolved_perf_targets.get("prefill_t/s"),
-            "decode_t/s":  resolved_perf_targets.get("decode_t/s"),
+            "decode_t/s": resolved_perf_targets.get("decode_t/s"),
             "decode_t/s/u": resolved_perf_targets.get("decode_t/s/u"),
         }
 
