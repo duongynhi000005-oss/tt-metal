@@ -913,6 +913,11 @@ TEST_P(SingleCoreSingleMeshDeviceSfpuBinaryParameterizedFixture, TensixSfpuBinar
     size_t num_tiles = std::get<0>(GetParam());
     std::string sfpu_op = std::get<1>(GetParam());
 
+    if (sfpu_op == "mul_int" && (MetalContext::instance().get_cluster().arch() == ARCH::WORMHOLE_B0 ||
+                                 MetalContext::instance().get_cluster().arch() == ARCH::BLACKHOLE)) {
+        GTEST_SKIP() << "not supported on WH/BH";
+    }
+
     const bool is_int8_op = unit_tests::sfpu_util::is_int8_binary_sfpu_op(sfpu_op);
     const tt::DataFormat data_format_input = is_int8_op ? tt::DataFormat::Int8 : tt::DataFormat::Float16_b;
     const tt::DataFormat data_format_output = is_int8_op ? tt::DataFormat::Int32 : tt::DataFormat::Float16_b;
@@ -938,12 +943,11 @@ INSTANTIATE_TEST_SUITE_P(
     SingleCoreSfpuBinaryCompute,
     SingleCoreSingleMeshDeviceSfpuBinaryParameterizedFixture,
     ::testing::Values(
-        // std::make_tuple(1, "div_binary"),
-        // std::make_tuple(4, "div_binary"),
-        // std::make_tuple(1, "add_int")
-        std::make_tuple(1, "mul_int")
-        // std::make_tuple(4, "add_int"),
-        // std::make_tuple(4, "mul_int")
-        ));
+        std::make_tuple(1, "div_binary"),
+        std::make_tuple(4, "div_binary"),
+        std::make_tuple(1, "add_int"),
+        std::make_tuple(1, "mul_int"),
+        std::make_tuple(4, "add_int"),
+        std::make_tuple(4, "mul_int")));
 
 }  // namespace tt::tt_metal
