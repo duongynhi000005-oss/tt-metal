@@ -26,6 +26,8 @@ Optional:
                                             /data/scaleout_configs is mounted by default; each host path
                                             is mounted at the same path inside the container
     --rerun-on-retrain                      Rerun validation when Ethernet links are retrained
+    --min-connections <number>              Relaxed validation: pass as long as each ASIC pair has at least this many
+                                            connections (without this, validation fails if any expected cable is missing)
     --help                                  Display this help message and exit
 
 Example:
@@ -46,6 +48,7 @@ FACTORY_DESCRIPTOR_PATH=""
 OUTPUT_DIR="validation_output"
 EXTRA_VOLUMES=(/data/scaleout_configs)
 RERUN_ON_RETRAIN=false
+MIN_CONNECTIONS=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -125,6 +128,18 @@ while [[ $# -gt 0 ]]; do
             RERUN_ON_RETRAIN=true
             shift
             ;;
+        --min-connections)
+            if [[ -z "$2" ]] || [[ "$2" == --* ]]; then
+                echo "Error: --min-connections requires a non-empty value"
+                exit 1
+            fi
+            if ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Error: --min-connections must be a positive integer, got '$2'"
+                exit 1
+            fi
+            MIN_CONNECTIONS="$2"
+            shift 2
+            ;;
         --help)
             show_help
             exit 0
@@ -173,6 +188,7 @@ run_cluster_validation() {
             --tag-output \
             ./build/tools/scaleout/run_cluster_validation \
             "${descriptor_args[@]}" \
+            ${MIN_CONNECTIONS:+--min-connections $MIN_CONNECTIONS} \
             --send-traffic \
             --num-iterations 10 \
             --output-path "$validation_output_path"
@@ -183,6 +199,7 @@ run_cluster_validation() {
             --host "$HOSTS" \
             ./build/tools/scaleout/run_cluster_validation \
             "${descriptor_args[@]}" \
+            ${MIN_CONNECTIONS:+--min-connections $MIN_CONNECTIONS} \
             --send-traffic \
             --num-iterations 10 \
             --output-path "$validation_output_path"
@@ -254,6 +271,9 @@ else
 fi
 echo "Number of iterations: $ITERATIONS"
 echo "Output directory: $OUTPUT_DIR"
+if [[ -n "$MIN_CONNECTIONS" ]]; then
+    echo "Min connections per ASIC pair: $MIN_CONNECTIONS (relaxed validation)"
+fi
 echo ""
 
 # Create output directory if it doesn't exist and resolve to an absolute path so

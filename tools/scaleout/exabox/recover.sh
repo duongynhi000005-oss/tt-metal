@@ -37,6 +37,11 @@ Optional:
     --factory-descriptor-path <path>        Path to factory system descriptor file (overrides --config defaults;
                                             when provided, cabling and deployment descriptors are ignored)
                                             (8x16 default: /data/scaleout_configs/5xBH_8x16_intrapod/fsd.textproto)
+    --min-connections <number>              Relaxed validation: pass as long as each ASIC pair has at least this many
+                                            connections (without this, recovery fails if any expected cable is missing)
+    --rerun-on-retrain                      Rerun validation when Ethernet links are retrained
+                                            (the underlying tool early-exits after a successful retrain without sending
+                                            traffic; this reruns it to actually validate the cluster)
     --help                                  Display this help message and exit
 
 Example:
@@ -64,6 +69,8 @@ CHECK=false
 MPI_IF="ens5f0np0"
 MPI_EXTRA_ARGS=()
 LOG_FILE=""
+MIN_CONNECTIONS=""
+RERUN_ON_RETRAIN=false
 
 CABLING_DESCRIPTOR_PATH_DEFAULT="/data/scaleout_configs/bh_glx_exabox/cabling_descriptor.textproto"
 DEPLOYMENT_DESCRIPTOR_PATH_DEFAULT="/data/scaleout_configs/bh_glx_exabox/deployment_descriptor.textproto"
@@ -194,6 +201,26 @@ while [[ $# -gt 0 ]]; do
             FACTORY_DESCRIPTOR_PATH="$2"
             shift 2
             ;;
+        --min-connections)
+            if [[ -z "$2" ]] || [[ "$2" == --* ]]; then
+                echo "Error: --min-connections requires a non-empty value"
+                exit 1
+            fi
+            if ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Error: --min-connections must be a positive integer, got '$2'"
+                exit 1
+            fi
+            MIN_CONNECTIONS="$2"
+            shift 2
+            ;;
+        --rerun-on-retrain)
+            if [[ -n "$2" ]] && [[ "$2" != --* ]]; then
+                echo "Error: --rerun-on-retrain does not accept a value"
+                exit 1
+            fi
+            RERUN_ON_RETRAIN=true
+            shift
+            ;;
         --help)
             show_help
             exit 0
@@ -289,6 +316,10 @@ echo "Sleep after reset: ${SLEEP_DURATION}s"
 echo "Skip reset: $SKIP_RESET"
 echo "Skip validation: $SKIP_VALIDATION"
 echo "Log file: $LOG_FILE"
+if [[ -n "$MIN_CONNECTIONS" ]]; then
+    echo "Min connections per ASIC pair: $MIN_CONNECTIONS (relaxed validation)"
+fi
+echo "Rerun on retrain: $RERUN_ON_RETRAIN"
 echo "=========================================="
 echo ""
 
@@ -315,24 +346,39 @@ if [[ "$SKIP_VALIDATION" == false ]]; then
         VALIDATION_ARGS+=(--send-traffic)
     fi
     VALIDATION_ARGS+=(--num-iterations "$NUM_ITERATIONS")
+    if [[ -n "$MIN_CONNECTIONS" ]]; then
+        VALIDATION_ARGS+=(--min-connections "$MIN_CONNECTIONS")
+    fi
+
+    run_cluster_validation() {
+        if [[ -n "$DOCKER_IMAGE" ]]; then
+            ./tools/scaleout/exabox/mpi-docker --image "$DOCKER_IMAGE" \
+                --empty-entrypoint \
+                --volume /data/scaleout_configs \
+                --host "$HOSTS" \
+                ./build/tools/scaleout/run_cluster_validation \
+                "${VALIDATION_ARGS[@]}"
+        else
+            mpirun --host "$HOSTS" \
+                --mca btl_tcp_if_include "$MPI_IF" \
+                "${MPI_EXTRA_ARGS[@]}" \
+                --tag-output \
+                ./build/tools/scaleout/run_cluster_validation \
+                "${VALIDATION_ARGS[@]}"
+        fi
+    }
 
     echo ""
     echo "Running cluster validation..."
-    if [[ -n "$DOCKER_IMAGE" ]]; then
-        ./tools/scaleout/exabox/mpi-docker --image "$DOCKER_IMAGE" \
-            --empty-entrypoint \
-            --volume /data/scaleout_configs \
-            --host "$HOSTS" \
-            ./build/tools/scaleout/run_cluster_validation \
-            "${VALIDATION_ARGS[@]}"
-    else
-        mpirun --host "$HOSTS" \
-            --mca btl_tcp_if_include "$MPI_IF" \
-            "${MPI_EXTRA_ARGS[@]}" \
-            --tag-output \
-            ./build/tools/scaleout/run_cluster_validation \
-            "${VALIDATION_ARGS[@]}"
+    VALIDATION_LOG=$(mktemp)
+    run_cluster_validation 2>&1 | tee "$VALIDATION_LOG"
+
+    if [[ "$RERUN_ON_RETRAIN" == true ]] && grep -q "Ethernet Links were Retrained" "$VALIDATION_LOG"; then
+        echo ""
+        echo "Ethernet links were retrained — rerunning validation to issue traffic..."
+        run_cluster_validation
     fi
+    rm -f "$VALIDATION_LOG"
 else
     echo "Skipping validation (--skip-validation)"
 fi
