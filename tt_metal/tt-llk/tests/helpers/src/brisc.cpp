@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cstdint>
+#include <type_traits>
 
 #include "boot.h"
 
@@ -10,11 +11,8 @@
 #ifdef LLK_BOOT_MODE_BRISC
 
 // Mailbox addresses
-#ifdef COVERAGE
-mailbox_t mailboxes_arr = (mailbox_t)0x6DFB8U;
-#else
-mailbox_t mailboxes_arr = (mailbox_t)0x1FFB8U;
-#endif
+extern std::remove_pointer<mailbox_t> mailboxes_arr_[];
+constexpr mailbox_t mailboxes_arr = mailboxes_arr_;
 
 #ifdef ARCH_WORMHOLE
 #define ARCH_CYCLE_MICRO_SECOND 1000
@@ -23,17 +21,18 @@ mailbox_t mailboxes_arr = (mailbox_t)0x1FFB8U;
 #define ARCH_CYCLE_MICRO_SECOND 1350
 #endif
 
-mailbox_t mailbox_unpack = mailboxes_arr;
-mailbox_t mailbox_math   = mailboxes_arr + 1;
-mailbox_t mailbox_pack   = mailboxes_arr + 2;
+constexpr mailbox_t mailbox_unpack = mailboxes_arr;
+constexpr mailbox_t mailbox_math   = mailboxes_arr + 1;
+constexpr mailbox_t mailbox_pack   = mailboxes_arr + 2;
 
-mailbox_t brisc_command_buffer = mailboxes_arr + 3; // 2 entries
-mailbox_t brisc_counter        = mailboxes_arr + 5;
+constexpr mailbox_t brisc_command_buffer = mailboxes_arr + 3; // 2 entries
+constexpr mailbox_t brisc_counter        = mailboxes_arr + 5;
 
-mailbox_t brisc_bread0 = mailboxes_arr + 6;
-mailbox_t brisc_bread1 = mailboxes_arr + 7;
+constexpr mailbox_t brisc_bread0 = mailboxes_arr + 6;
+constexpr mailbox_t brisc_bread1 = mailboxes_arr + 7;
 
-mailbox_t profiler_barrier = (mailbox_t)0x16AFF4U;
+extern std::remove_pointer<mailbox_t>::type profiler_barrier_[];
+constexpr mailbox_t profiler_barrier = profiler_barrier_;
 
 enum class BriscCommandState : std::uint32_t
 {
@@ -54,6 +53,16 @@ constexpr std::uint32_t BRISC_BOOT_READY_SENTINEL = 0xB001CAFEU;
 
 void reset_state(std::uint32_t& counter)
 {
+    asm(".equiv mailboxes_arr_, %0" ::"n"(
+#ifdef COVERAGE
+        0x6DFB8U
+#else
+        0x1FFB8U
+#endif
+        ));
+
+    asm(".equiv profiler_barrier_, %0" ::"n"(0x16AFF4U));
+
     counter++;
     // Double buffer protocol: host writes the next command to slot (counter & 1),
     // BRISC reads from the same slot. After processing, bump counter so both sides
