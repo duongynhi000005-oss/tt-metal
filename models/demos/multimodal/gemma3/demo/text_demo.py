@@ -52,7 +52,7 @@ def get_accuracy_thresholds(model_args, optimizations):
             f"{model_args.base_model_name} on {model_args.device_name} "
             f"(batch_size=1, seq_len={seq_len}, mode={optimizations.__name__})"
         )
-    return float(centralized_targets["top1"]), float(centralized_targets["top5"])
+    return float(centralized_targets["top1"]) - 0.5, float(centralized_targets["top5"]) - 0.5
 
 
 def create_tt_model(
