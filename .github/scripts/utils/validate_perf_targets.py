@@ -175,6 +175,7 @@ def _check_metric(
         )
     return None
 
+
 def _benchmark_files(benchmark_dir: Path) -> list[Path]:
     """Return benchmark payload files in deterministic order."""
     return sorted(benchmark_dir.glob("complete_run_*.json"))
