@@ -30,6 +30,8 @@ tt::tt_metal::ProgramDescriptor build_combine_program_descriptor(
     const AllToAllCombineDeviceOperation::tensor_args_t& tensor_args,
     AllToAllCombineDeviceOperation::tensor_return_value_t& tensor_return_value,
     const ttnn::MeshCoordinate& mesh_coordinate,
+    const std::vector<uint32_t>& dest_mesh_id,
+    const std::vector<uint32_t>& dest_chip_id,
     const tt::tt_metal::GlobalSemaphore& init_semaphore,
     const tt::tt_metal::GlobalSemaphore& cross_device_semaphore) {
     using namespace tt::tt_metal;
@@ -220,15 +222,6 @@ tt::tt_metal::ProgramDescriptor build_combine_program_descriptor(
     };
     TensorAccessorArgs(output_tensor.buffer()).append_to(writer_compile_time_args);
 
-    // fabric routing info — enumerated for every device in the mesh in row-major order to
-    // build the DEST_CHIP_ID / DEST_MESH_ID define arrays consumed by the writer kernel.
-    // Mirrors the legacy use of `all_mesh_coordinates` (passed as tensor_coords.coords()),
-    // which for these CCL ops covers the entire mesh.
-    std::vector<uint32_t> dest_mesh_id, dest_chip_id;
-    for (const auto& coord_fabric_node_id : mesh_view.get_fabric_node_ids()) {
-        dest_mesh_id.push_back(*coord_fabric_node_id.mesh_id);
-        dest_chip_id.push_back((uint32_t)coord_fabric_node_id.chip_id);
-    }
     const auto [neighbors, directions] = common::get_neighbors(mesh_view, mesh_coordinate, topology, axis);
 
     std::map<std::string, std::string> writer_defines = {
@@ -354,16 +347,29 @@ tt::tt_metal::WorkloadDescriptor AllToAllCombineDeviceOperation::AllToAllCombine
     workload_descriptor.semaphores.push_back(init_barrier_semaphore);
     workload_descriptor.semaphores.push_back(final_barrier_semaphore);
 
+    const auto coords = tensor_coords.coords();
+
+    std::vector<uint32_t> dest_mesh_id, dest_chip_id;
+    dest_mesh_id.reserve(coords.size());
+    dest_chip_id.reserve(coords.size());
+    for (const auto& coord : coords) {
+        const auto coord_fabric_node_id = mesh_device->get_fabric_node_id(coord);
+        dest_mesh_id.push_back(*coord_fabric_node_id.mesh_id);
+        dest_chip_id.push_back((uint32_t)coord_fabric_node_id.chip_id);
+    }
+
     // Per-coord variation (src_chip_id, linearized mesh index, fabric-connection
     // runtime args, DIRECTIONS define) means we MUST build one ProgramDescriptor
     // per coord rather than reuse a single descriptor across the mesh.
-    workload_descriptor.programs.reserve(tensor_coords.coords().size());
-    for (const auto& coord : tensor_coords.coords()) {
+    workload_descriptor.programs.reserve(coords.size());
+    for (const auto& coord : coords) {
         ProgramDescriptor desc = build_combine_program_descriptor(
             operation_attributes,
             tensor_args,
             tensor_return_value,
             coord,
+            dest_mesh_id,
+            dest_chip_id,
             init_barrier_semaphore,
             final_barrier_semaphore);
         workload_descriptor.programs.push_back({ttnn::MeshCoordinateRange(coord), std::move(desc)});
