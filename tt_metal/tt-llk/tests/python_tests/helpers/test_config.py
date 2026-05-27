@@ -392,7 +392,7 @@ class TestConfig:
         debug_flag = "" if no_debug_symbols else "-g "
         TestConfig.OPTIONS_ALL = (
             f"{debug_flag}-O3 "
-            "-std=c++17 -ftt-nttp -ftt-constinit -ftt-consteval -ftt-no-dyninit "
+            "-std=c++17 -ftt-nttp -ftt-constinit -ftt-consteval "
             "-ffast-math -fno-exceptions -fno-rtti -fno-use-cxa-atexit "
         )
         TestConfig.WITH_COVERAGE = with_coverage
