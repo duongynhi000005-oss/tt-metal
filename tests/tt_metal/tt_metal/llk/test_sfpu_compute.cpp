@@ -223,7 +223,6 @@ experimental::metal2_host_api::DataflowBufferSpec make_dfb_spec(
         .entry_size = static_cast<uint32_t>(cfg.tile_byte_size),
         .num_entries = static_cast<uint32_t>(cfg.num_tiles),
         .data_format_metadata = fmt,
-        .disable_implicit_sync = true,
     };
 }
 
@@ -255,7 +254,8 @@ experimental::metal2_host_api::KernelSpec make_writer_unary_quasar_spec(const ch
         .config_spec =
             experimental::metal2_host_api::DataMovementConfiguration{
                 .gen2_data_movement_config =
-                    experimental::metal2_host_api::DataMovementConfiguration::Gen2DataMovementConfig{}},
+                    experimental::metal2_host_api::DataMovementConfiguration::Gen2DataMovementConfig{
+                        .disable_implicit_sync_for = {out_dfb_id}}},
     };
 }
 
@@ -286,7 +286,8 @@ experimental::metal2_host_api::KernelSpec make_reader_binary_quasar_spec(
         .config_spec =
             experimental::metal2_host_api::DataMovementConfiguration{
                 .gen2_data_movement_config =
-                    experimental::metal2_host_api::DataMovementConfiguration::Gen2DataMovementConfig{}},
+                    experimental::metal2_host_api::DataMovementConfiguration::Gen2DataMovementConfig{
+                        .disable_implicit_sync_for = {in0_dfb_id, in1_dfb_id}}},
     };
 }
 
@@ -403,7 +404,8 @@ bool run_sfpu_all_same_buffer(
             .config_spec =
                 experimental::metal2_host_api::DataMovementConfiguration{
                     .gen2_data_movement_config =
-                        experimental::metal2_host_api::DataMovementConfiguration::Gen2DataMovementConfig{}},
+                        experimental::metal2_host_api::DataMovementConfiguration::Gen2DataMovementConfig{
+                            .disable_implicit_sync_for = {IN_DFB}}},
         };
 
         experimental::metal2_host_api::KernelSpec compute_spec{
