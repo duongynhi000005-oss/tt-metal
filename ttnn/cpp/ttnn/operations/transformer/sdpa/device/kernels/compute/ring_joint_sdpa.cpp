@@ -57,6 +57,9 @@ void kernel_main() {
     constexpr bool use_zigzag_balancing = get_compile_time_arg_val(39) == 1;
     constexpr bool chunked_enabled = get_compile_time_arg_val(40) == 1;
     constexpr uint32_t chunk_size_t = get_compile_time_arg_val(41);
+    constexpr bool kv_pad_rotation_enabled = get_compile_time_arg_val(42) == 1;
+    constexpr uint32_t kv_actual_nt = get_compile_time_arg_val(43);
+    constexpr uint32_t new_actual_nt = get_compile_time_arg_val(44);
     // Diagonal-mask tile slot is shared by the kernel's is_causal path and the chunked-prefill
     // path. kernel_is_causal is masked off by the program factory when chunked is on, so only
     // one of the two paths drives the stamp per program — but they share the CB slot layout.
@@ -149,7 +152,17 @@ void kernel_main() {
     };
 
     const uint32_t last_active_ring_iter = find_last_active_ring_iter(
-        fused_op_indexer.seq, kv_local_padded_Nt, logical_nt - 1, L, is_causal, is_balanced, chunked_enabled);
+        fused_op_indexer.seq,
+        kv_local_padded_Nt,
+        logical_nt - 1,
+        L,
+        is_causal,
+        is_balanced,
+        chunked_enabled,
+        kv_pad_rotation_enabled,
+        kv_actual_nt,
+        new_actual_nt,
+        q_local_padded_Nt);
 
     uint32_t ring_index = fused_op_indexer.seq.ring_index;
     uint32_t half_sequence = num_q_chunks / 2;
@@ -167,7 +180,10 @@ void kernel_main() {
         // its padding cells masked downstream (see same line in ring_joint_reader.cpp).
         const uint32_t global_n_tile_id = logical_nt - 1;
         const bool ring_iter_processes_KV_chunks =
-            chunked_enabled ? true : (ring_iter_kv_start_tile <= global_n_tile_id);
+            kv_pad_rotation_enabled
+                ? kv_pad_k_chunk_has_valid_cols(
+                      ring_id, 0, kv_local_padded_Nt, kv_actual_nt, new_actual_nt, ring_size, q_local_padded_Nt)
+                : (chunked_enabled ? true : (ring_iter_kv_start_tile <= global_n_tile_id));
         const bool ring_iter_does_work = (ring_iter_processes_KV_chunks || (do_joint_kv && L != 0)) &&
                                          !(is_causal && ring_index < ring_id && !is_balanced);
 
@@ -296,7 +312,14 @@ void kernel_main() {
                 lw_mask,
                 skip_first_half_q,
                 use_zigzag_balancing,
-                ChunkedContext{q_start_idx_t, ring_index},
+                ChunkedContext{
+                    q_start_idx_t,
+                    ring_index,
+                    kv_pad_rotation_enabled,
+                    kv_actual_nt,
+                    new_actual_nt,
+                    ring_size,
+                    q_local_padded_Nt},
                 is_first_active_iter);
         } else {
             sdpa_ring<
@@ -367,7 +390,14 @@ void kernel_main() {
                 skip_first_half_q,
                 is_last_ring_iter,
                 use_zigzag_balancing,
-                ChunkedContext{q_start_idx_t, ring_index});
+                ChunkedContext{
+                    q_start_idx_t,
+                    ring_index,
+                    kv_pad_rotation_enabled,
+                    kv_actual_nt,
+                    new_actual_nt,
+                    ring_size,
+                    q_local_padded_Nt});
         }
     }
 }

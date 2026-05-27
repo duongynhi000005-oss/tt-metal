@@ -116,8 +116,12 @@ inline uint32_t find_last_active_ring_iter(
     uint32_t L,
     bool is_causal = false,
     bool is_balanced = false,
-    bool chunked_enabled = false) {
-    if (chunked_enabled) {
+    bool chunked_enabled = false,
+    bool kv_pad_rotation_enabled = false,
+    uint32_t kv_actual_nt = 0,
+    uint32_t new_actual_nt = 0,
+    uint32_t chunk_size_local_nt = 0) {
+    if (chunked_enabled && !kv_pad_rotation_enabled) {
         return seq.ring_size - 1;
     }
 
@@ -128,8 +132,15 @@ inline uint32_t find_last_active_ring_iter(
         uint32_t ring_id = seq.get_next_ring_id(no_sync);
         bool does_joint = (ring_id == seq.ring_size - 1);
         uint32_t kv_start = ring_id * local_padded_Nt;
-        bool does_work = ((kv_start <= last_n_tile_id) || (does_joint && L != 0)) &&
-                         !(is_causal && seq.ring_index < ring_id && !is_balanced);
+        bool has_kv_work = false;
+        if (kv_pad_rotation_enabled) {
+            has_kv_work = kv_pad_k_chunk_has_valid_cols(
+                ring_id, 0, local_padded_Nt, kv_actual_nt, new_actual_nt, seq.ring_size, chunk_size_local_nt);
+        } else {
+            has_kv_work = kv_start <= last_n_tile_id;
+        }
+        bool does_work =
+            (has_kv_work || (does_joint && L != 0)) && !(is_causal && seq.ring_index < ring_id && !is_balanced);
         if (does_work) {
             last_active = t;
         }
@@ -149,16 +160,36 @@ template <
     uint32_t chunk_size_t = 0,
     uint32_t q_local_padded_Nt = 0>
 inline uint32_t count_valid_kv_chunks(
-    uint32_t num_kv_chunks, uint32_t num_local_k_chunks, uint32_t ring_id, uint32_t logical_nt) {
+    uint32_t num_kv_chunks,
+    uint32_t num_local_k_chunks,
+    uint32_t ring_id,
+    uint32_t logical_nt,
+    bool kv_pad_rotation_enabled = false,
+    uint32_t kv_actual_nt = 0,
+    uint32_t new_actual_nt = 0,
+    uint32_t ring_size = 0) {
     uint32_t count = 0;
     for (uint32_t k = 0; k < num_kv_chunks; ++k) {
         const bool is_joint = k >= num_local_k_chunks;
         if (!is_joint) {
-            const uint32_t kv_global_start_tile =
-                kv_global_tile_for_local<chunked_enabled, kv_local_padded_Nt, chunk_size_t, q_local_padded_Nt>(
-                    ring_id, k * Sk_chunk_t);
-            if (kv_global_start_tile >= logical_nt) {
-                continue;
+            if (kv_pad_rotation_enabled) {
+                if (!kv_pad_k_chunk_has_valid_cols(
+                        ring_id,
+                        k * Sk_chunk_t,
+                        Sk_chunk_t,
+                        kv_actual_nt,
+                        new_actual_nt,
+                        ring_size,
+                        q_local_padded_Nt)) {
+                    continue;
+                }
+            } else {
+                const uint32_t kv_global_start_tile =
+                    kv_global_tile_for_local<chunked_enabled, kv_local_padded_Nt, chunk_size_t, q_local_padded_Nt>(
+                        ring_id, k * Sk_chunk_t);
+                if (kv_global_start_tile >= logical_nt) {
+                    continue;
+                }
             }
         }
         count++;

@@ -334,6 +334,9 @@ void kernel_main() {
     constexpr uint32_t out_subblock_h = get_compile_time_arg_val(28);
     constexpr bool chunked_enabled = get_compile_time_arg_val(29) == 1;
     constexpr uint32_t chunk_size_t = get_compile_time_arg_val(30);
+    constexpr bool kv_pad_rotation_enabled = get_compile_time_arg_val(31) == 1;
+    constexpr uint32_t kv_actual_nt = get_compile_time_arg_val(32);
+    constexpr uint32_t new_actual_nt = get_compile_time_arg_val(33);
     // Diagonal-mask tile slot is shared by the kernel's is_causal path and the chunked-prefill
     // path. The program factory masks kernel_is_causal off when chunked is on, so only one of
     // the two paths drives the stamp per program — but they share the CB slot layout.
@@ -344,7 +347,7 @@ void kernel_main() {
     constexpr bool has_joint_q = num_joint_q_chunks > 0;
     constexpr bool has_joint_k = num_joint_k_chunks > 0;
 
-    constexpr auto out_args = TensorAccessorArgs<31>();
+    constexpr auto out_args = TensorAccessorArgs<34>();
     constexpr auto joint_out_args = TensorAccessorArgs<out_args.next_compile_time_args_offset()>();
     constexpr auto stats_args = TensorAccessorArgs<joint_out_args.next_compile_time_args_offset()>();
 
@@ -413,7 +416,17 @@ void kernel_main() {
     }
 
     const uint32_t last_active_ring_iter = find_last_active_ring_iter(
-        fused_op_receiver.seq, kv_local_padded_Nt, logical_nt - 1, L, is_causal, is_balanced, chunked_enabled);
+        fused_op_receiver.seq,
+        kv_local_padded_Nt,
+        logical_nt - 1,
+        L,
+        is_causal,
+        is_balanced,
+        chunked_enabled,
+        kv_pad_rotation_enabled,
+        kv_actual_nt,
+        new_actual_nt,
+        q_local_padded_Nt);
 
     uint32_t ring_index = fused_op_receiver.seq.ring_index;
     uint32_t half_sequence = num_q_chunks / 2;
@@ -446,7 +459,10 @@ void kernel_main() {
         // its padding cells masked downstream (see same line in ring_joint_reader.cpp).
         const uint32_t global_n_tile_id = logical_nt - 1;
         const bool ring_iter_processes_KV_chunks =
-            chunked_enabled ? true : (ring_iter_kv_start_tile <= global_n_tile_id);
+            kv_pad_rotation_enabled
+                ? kv_pad_k_chunk_has_valid_cols(
+                      ring_id, 0, kv_local_padded_Nt, kv_actual_nt, new_actual_nt, ring_size, q_local_padded_Nt)
+                : (chunked_enabled ? true : (ring_iter_kv_start_tile <= global_n_tile_id));
         const bool joint_contributes = (has_joint_k && L != 0) ? do_joint_kv : false;
         const bool ring_iter_does_work = (ring_iter_processes_KV_chunks || joint_contributes) &&
                                          !(is_causal && ring_index < ring_id && !is_balanced);
@@ -461,7 +477,14 @@ void kernel_main() {
         // prefetch that blocks on cb_prev_out, or the writer and compute deadlock.
         const uint32_t total_valid_kv =
             count_valid_kv_chunks<chunked_enabled, kv_local_padded_Nt, Sk_chunk_t, chunk_size_t, q_local_padded_Nt>(
-                num_kv_chunks, num_local_k_chunks, ring_id, logical_nt);
+                num_kv_chunks,
+                num_local_k_chunks,
+                ring_id,
+                logical_nt,
+                kv_pad_rotation_enabled,
+                kv_actual_nt,
+                new_actual_nt,
+                ring_size);
         const bool single_valid_kv_chunk = (total_valid_kv <= 1);
 
         /**

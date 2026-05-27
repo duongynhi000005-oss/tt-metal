@@ -682,6 +682,50 @@ static SDPA_NOINLINE void apply_lightweight_mask_streaming(
     }
 }
 
+template <uint32_t num_cols>
+static SDPA_NOINLINE void apply_kv_pad_rotation_mask_streaming(
+    uint32_t mask_cb,
+    uint32_t out_cb,
+    uint32_t q_subblock,
+    uint32_t sbh,
+    uint32_t neginf_idx,
+    uint32_t diag_idx,
+    uint32_t q_chip,
+    uint32_t k_chip,
+    uint32_t q_start_local_tile,
+    uint32_t k_start_local_tile,
+    uint32_t kv_actual_nt,
+    uint32_t new_actual_nt,
+    uint32_t ring_size,
+    uint32_t chunk_size_local_nt) {
+    for (uint32_t row = 0; row < sbh; row++) {
+        const uint32_t row_offset = (q_subblock * sbh + row) * num_cols;
+        const uint32_t q_pos = kv_pad_q_global_tile_for_local(
+            q_chip,
+            q_start_local_tile + q_subblock * sbh + row,
+            kv_actual_nt,
+            new_actual_nt,
+            ring_size,
+            chunk_size_local_nt);
+        if (q_pos == KV_PAD_ROTATION_INVALID_TILE) {
+            for (uint32_t col = 0; col < num_cols; col++) {
+                l1_acc_single_tile(mask_cb, neginf_idx, out_cb, row_offset + col);
+            }
+            continue;
+        }
+
+        for (uint32_t col = 0; col < num_cols; col++) {
+            const uint32_t k_pos = kv_pad_k_global_tile_for_local(
+                k_chip, k_start_local_tile + col, kv_actual_nt, new_actual_nt, ring_size, chunk_size_local_nt);
+            if (k_pos == KV_PAD_ROTATION_INVALID_TILE || k_pos > q_pos) {
+                l1_acc_single_tile(mask_cb, neginf_idx, out_cb, row_offset + col);
+            } else if (k_pos == q_pos) {
+                l1_acc_single_tile(mask_cb, diag_idx, out_cb, row_offset + col);
+            }
+        }
+    }
+}
+
 /**
  * Largest factor of n that is <= max_val.  Picks a QKT subblock width that
  * evenly divides the active K-tile count on the last K-chunk, avoiding
@@ -746,7 +790,16 @@ static void sdpa_inner_loop_step(
     const uint32_t neginf_idx = 0,
     const uint32_t causal_diag_idx = 0,
     const uint32_t causal_straddle_col = 0,
-    const uint32_t causal_straddle_jump = 0) {
+    const uint32_t causal_straddle_jump = 0,
+    const bool kv_pad_rotation_enabled = false,
+    const uint32_t kv_pad_q_chip = 0,
+    const uint32_t kv_pad_k_chip = 0,
+    const uint32_t kv_pad_q_start_local_tile = 0,
+    const uint32_t kv_pad_k_start_local_tile = 0,
+    const uint32_t kv_pad_kv_actual_nt = 0,
+    const uint32_t kv_pad_new_actual_nt = 0,
+    const uint32_t kv_pad_ring_size = 0,
+    const uint32_t kv_pad_chunk_size_local_nt = 0) {
     // Callers guarantee active_Sk is evenly divisible by actual_sbw (via largest_factor_le).
     const uint32_t kt_num_full_subblocks = active_Sk / actual_sbw;
     constexpr uint32_t dst_size = compute_kernel_lib::DEST_AUTO_LIMIT;
@@ -855,27 +908,46 @@ static void sdpa_inner_loop_step(
         // for this row group. Active for ring, causal non-ring, or non-causal padded with a
         // partial-tile mask (single-chip streaming partial-K case).
         if constexpr (ring_mode || is_causal_sdpa || use_padded_mask) {
-            if ((is_causal_sdpa && apply_causal) || (apply_mask && lw_partial_tile_idx > 0)) {
+            if (kv_pad_rotation_enabled || (is_causal_sdpa && apply_causal) ||
+                (apply_mask && lw_partial_tile_idx > 0)) {
                 // MOP is configured for actual_sbw tiles (blocked matmul); mask needs 1 tile per pack.
                 configure_single_tile_pack(cb_qkt_im);
                 copy_tile_to_dst_init_short(cb_mask_in);
                 PACK((llk_pack_reconfig_l1_acc(1)));
-                apply_lightweight_mask_streaming<KT_stride, is_causal_sdpa>(
-                    cb_mask_in,
-                    cb_qkt_im,
-                    q_subblock,
-                    Sk_chunk_t - active_Sk,
-                    (apply_mask && lw_partial_tile_idx > 0),
-                    lw_partial_tile_idx,
-                    qkt_subblock_h,
-                    apply_causal,
-                    neginf_idx,
-                    causal_diag_idx,
-                    causal_q_start_tile,
-                    causal_k_start_tile,
-                    active_Sk,
-                    causal_straddle_col,
-                    causal_straddle_jump);
+                if (kv_pad_rotation_enabled) {
+                    apply_kv_pad_rotation_mask_streaming<KT_stride>(
+                        cb_mask_in,
+                        cb_qkt_im,
+                        q_subblock,
+                        qkt_subblock_h,
+                        neginf_idx,
+                        causal_diag_idx,
+                        kv_pad_q_chip,
+                        kv_pad_k_chip,
+                        kv_pad_q_start_local_tile,
+                        kv_pad_k_start_local_tile,
+                        kv_pad_kv_actual_nt,
+                        kv_pad_new_actual_nt,
+                        kv_pad_ring_size,
+                        kv_pad_chunk_size_local_nt);
+                } else {
+                    apply_lightweight_mask_streaming<KT_stride, is_causal_sdpa>(
+                        cb_mask_in,
+                        cb_qkt_im,
+                        q_subblock,
+                        Sk_chunk_t - active_Sk,
+                        (apply_mask && lw_partial_tile_idx > 0),
+                        lw_partial_tile_idx,
+                        qkt_subblock_h,
+                        apply_causal,
+                        neginf_idx,
+                        causal_diag_idx,
+                        causal_q_start_tile,
+                        causal_k_start_tile,
+                        active_Sk,
+                        causal_straddle_col,
+                        causal_straddle_jump);
+                }
                 PACK((llk_pack_reconfig_l1_acc(0)));
             }
         }
@@ -1640,6 +1712,16 @@ void sdpa_ring_v2(
         if (kv_chunk_is_joint) {
             return false;
         }
+        if (chunked.kv_pad_rotation_enabled) {
+            return !kv_pad_k_chunk_has_valid_cols(
+                ring_id,
+                k_chunk * Sk_chunk_t,
+                Sk_chunk_t,
+                chunked.kv_actual_nt,
+                chunked.new_actual_nt,
+                chunked.ring_size,
+                chunked.q_local_padded_Nt);
+        }
         const uint32_t global_start =
             kv_global_tile_for_local<chunked_enabled, local_padded_Nt, chunk_size_t, q_local_padded_Nt>(
                 ring_id, k_chunk * Sk_chunk_t);
@@ -1757,7 +1839,7 @@ void sdpa_ring_v2(
             const bool is_straddle_mask_chunk =
                 lw_mask.straddle_num_padded_tiles > 0 && k_chunk == lw_mask.straddle_mask_chunk_id;
 
-            bool apply_mask = is_global_n_mask_chunk || is_joint_n_mask_chunk;
+            bool apply_mask = chunked.kv_pad_rotation_enabled || is_global_n_mask_chunk || is_joint_n_mask_chunk;
 
             // Resolve lightweight mask params for partial tile masking
             uint32_t lw_partial_tile_idx = 0;
@@ -1794,7 +1876,7 @@ void sdpa_ring_v2(
             // diag tile are -inf for every row in the Q-chunk, so skip matmul/sub_exp/V there.
             // Composes with any prior padding narrowing via min().
             if constexpr (is_causal_sdpa) {
-                if (is_causal_iter && k_chunk == causal_k_limit - 1) {
+                if (is_causal_iter && !chunked.kv_pad_rotation_enabled && k_chunk == causal_k_limit - 1) {
                     const uint32_t causal_active = q_start_tile + Sq_chunk_t - k_chunk * Sk_chunk_t;
                     if (causal_active < active_Sk_param) {
                         active_Sk_param = causal_active;
@@ -1889,7 +1971,16 @@ void sdpa_ring_v2(
                 lw_mask.neginf_tile_idx,
                 lw_mask.causal_diag_tile_idx,
                 step_straddle_col,
-                step_straddle_jump);
+                step_straddle_jump,
+                chunked.kv_pad_rotation_enabled,
+                chunked.ring_index,
+                ring_id,
+                q_chunk * Sq_chunk_t,
+                k_chunk * Sk_chunk_t,
+                chunked.kv_actual_nt,
+                chunked.new_actual_nt,
+                chunked.ring_size,
+                chunked.q_local_padded_Nt);
 
             // Post-iteration cleanup: pop previous values and swap aliases
             // prev.out and cb_exp_max_diff are already popped row-by-row inside salad_correct_row.

@@ -1472,6 +1472,53 @@ void apply_causal_mask_lightweight(
     PACK((llk_pack_reconfig_l1_acc(0)));
 }
 
+template <uint32_t dst_batch>
+void apply_kv_pad_rotation_mask_lightweight(
+    uint32_t mask_cb,
+    uint32_t neginf_idx,
+    uint32_t diag_idx,
+    uint32_t out_cb,
+    uint32_t q_chip,
+    uint32_t k_chip,
+    uint32_t q_start_local_tile,
+    uint32_t k_start_local_tile,
+    uint32_t num_rows,
+    uint32_t num_cols,
+    uint32_t kv_actual_nt,
+    uint32_t new_actual_nt,
+    uint32_t ring_size,
+    uint32_t chunk_size_local_nt) {
+    copy_tile_to_dst_init_short(mask_cb);
+    PACK((llk_pack_reconfig_l1_acc(1)));
+
+    for (uint32_t row = 0; row < num_rows; row++) {
+        const uint32_t row_offset = row * num_cols;
+        const uint32_t q_pos = kv_pad_q_global_tile_for_local(
+            q_chip, q_start_local_tile + row, kv_actual_nt, new_actual_nt, ring_size, chunk_size_local_nt);
+        if (q_pos == KV_PAD_ROTATION_INVALID_TILE) {
+            stamp_tile_range_l1_acc<dst_batch>(mask_cb, neginf_idx, out_cb, row_offset, num_cols);
+            continue;
+        }
+
+        for (uint32_t col = 0; col < num_cols; col++) {
+            const uint32_t k_pos = kv_pad_k_global_tile_for_local(
+                k_chip, k_start_local_tile + col, kv_actual_nt, new_actual_nt, ring_size, chunk_size_local_nt);
+            if (k_pos == KV_PAD_ROTATION_INVALID_TILE || k_pos > q_pos) {
+                stamp_tile_range_l1_acc<dst_batch>(mask_cb, neginf_idx, out_cb, row_offset + col, 1);
+            } else if (k_pos == q_pos) {
+                tile_regs_acquire();
+                copy_tile(mask_cb, diag_idx, 0);
+                tile_regs_commit();
+                tile_regs_wait();
+                pack_tile<true>(0, out_cb, row_offset + col);
+                tile_regs_release();
+            }
+        }
+    }
+
+    PACK((llk_pack_reconfig_l1_acc(0)));
+}
+
 /**
  * Context for lightweight mask application in ring joint SDPA.
  * All mask tiles reside in a single CB. This struct stores the pre-resolved mask metadata used when
@@ -1779,6 +1826,7 @@ void sdpa_inner_loop(
         uint32_t q_start_tile = 0;    // First tile of Q chunk (tile units, both STANDARD and RING)
         uint32_t q_high_tile = 0;     // STANDARD: upper tile bound for K iteration
         uint32_t causal_k_limit = 0;  // RING: K-chunk index beyond which all K is above the diagonal
+        uint32_t q_chunk_for_mask = 0;
         if constexpr (sdpa_type == STANDARD) {
             const uint32_t linear_q_chunk = local_q_start + (q_iter - iter_q_start);
             // Mod is a no-op when the input is per-head ([0, q_num_chunks)) and extracts the
@@ -1788,6 +1836,7 @@ void sdpa_inner_loop(
             if constexpr (is_chunked) {
                 q_chunk = chunked_q_chunk_offset + q_chunk;
             }
+            q_chunk_for_mask = q_chunk;
             q_start_tile = q_chunk * Sq_chunk_t;
             if (is_causal) {
                 // Clamp to total K-tile extent. Mirrors reader_interleaved's clamp; without
@@ -1800,6 +1849,7 @@ void sdpa_inner_loop(
             }
         } else if (sdpa_type == RING) {
             uint32_t q_chunk = remap_q_index(q_iter, q_num_chunks, use_zigzag_balancing) % q_num_chunks;
+            q_chunk_for_mask = q_chunk;
 
             if constexpr (chunked_enabled) {
                 // Absolute Q tile row. Diag stamp masks K past Q's range; logical_n skip handles K past the cache.
@@ -1844,7 +1894,17 @@ void sdpa_inner_loop(
                 } else {
                     kv_global_start_tile = local_padded_Nt * ring_id + k_chunk * Sk_chunk_t;
                 }
-                if (!kv_chunk_is_joint && (kv_global_start_tile >= logical_nt)) {
+                const bool kv_chunk_is_beyond_logical_n = chunked_enabled && chunked.kv_pad_rotation_enabled
+                                                              ? !kv_pad_k_chunk_has_valid_cols(
+                                                                    ring_id,
+                                                                    k_chunk * Sk_chunk_t,
+                                                                    Sk_chunk_t,
+                                                                    chunked.kv_actual_nt,
+                                                                    chunked.new_actual_nt,
+                                                                    chunked.ring_size,
+                                                                    chunked.q_local_padded_Nt)
+                                                              : (kv_global_start_tile >= logical_nt);
+                if (!kv_chunk_is_joint && kv_chunk_is_beyond_logical_n) {
                     // This is a KV chunk on spatial input beyond the logical N, and not joint KV. Skip it.
                     continue;
                 }
@@ -1901,6 +1961,8 @@ void sdpa_inner_loop(
                  (lw_mask.straddle_num_padded_tiles > 0 && k_chunk == lw_mask.straddle_mask_chunk_id));
             if (sdpa_type == RING && !is_causal) {
                 apply_mask = needs_padding_mask;
+            } else if (sdpa_type == RING && chunked_enabled && chunked.kv_pad_rotation_enabled) {
+                apply_mask = true;
             } else if (is_causal || sliding_window_size > 0) {
                 // Chunked-prefill (RING): use abs K so the causal-overlap test matches the diag stamp's frame.
                 uint32_t k_low_idx;
@@ -1976,23 +2038,61 @@ void sdpa_inner_loop(
                     } else {
                         k_start_tile_for_mask = k_chunk * Sk_chunk_t;
                     }
-                    lw_mask.template apply<dst_size>(
-                        cb_mask_in,
-                        cb_qk_im,
-                        Sk_chunk_t,
-                        Sq_chunk_t,
-                        k_chunk,
-                        num_local_k_chunks,
-                        ring_iter_needs_global_n_mask,
-                        ring_iter_needs_joint_n_mask,
-                        local_n_needs_masking,
-                        global_n_mask_chunk_id,
-                        local_n_mask_chunk_id,
-                        joint_n_mask_chunk_id,
-                        q_start_tile,
-                        k_start_tile_for_mask,
-                        lw_straddle_col,
-                        lw_straddle_jump);
+                    if constexpr (sdpa_type == RING && chunked_enabled) {
+                        if (chunked.kv_pad_rotation_enabled) {
+                            apply_kv_pad_rotation_mask_lightweight<dst_size>(
+                                cb_mask_in,
+                                lw_mask.neginf_tile_idx,
+                                lw_mask.causal_diag_tile_idx,
+                                cb_qk_im,
+                                chunked.ring_index,
+                                ring_id,
+                                q_chunk_for_mask * Sq_chunk_t,
+                                k_chunk * Sk_chunk_t,
+                                Sq_chunk_t,
+                                Sk_chunk_t,
+                                chunked.kv_actual_nt,
+                                chunked.new_actual_nt,
+                                chunked.ring_size,
+                                chunked.q_local_padded_Nt);
+                        } else {
+                            lw_mask.template apply<dst_size>(
+                                cb_mask_in,
+                                cb_qk_im,
+                                Sk_chunk_t,
+                                Sq_chunk_t,
+                                k_chunk,
+                                num_local_k_chunks,
+                                ring_iter_needs_global_n_mask,
+                                ring_iter_needs_joint_n_mask,
+                                local_n_needs_masking,
+                                global_n_mask_chunk_id,
+                                local_n_mask_chunk_id,
+                                joint_n_mask_chunk_id,
+                                q_start_tile,
+                                k_start_tile_for_mask,
+                                lw_straddle_col,
+                                lw_straddle_jump);
+                        }
+                    } else {
+                        lw_mask.template apply<dst_size>(
+                            cb_mask_in,
+                            cb_qk_im,
+                            Sk_chunk_t,
+                            Sq_chunk_t,
+                            k_chunk,
+                            num_local_k_chunks,
+                            ring_iter_needs_global_n_mask,
+                            ring_iter_needs_joint_n_mask,
+                            local_n_needs_masking,
+                            global_n_mask_chunk_id,
+                            local_n_mask_chunk_id,
+                            joint_n_mask_chunk_id,
+                            q_start_tile,
+                            k_start_tile_for_mask,
+                            lw_straddle_col,
+                            lw_straddle_jump);
+                    }
                     cb_push_back(cb_qk_im, Sk_chunk_t * Sq_chunk_t);
                 } else {
                     add_block_inplace(cb_qk_im, cb_mask_in, qk_chunk_tiles);

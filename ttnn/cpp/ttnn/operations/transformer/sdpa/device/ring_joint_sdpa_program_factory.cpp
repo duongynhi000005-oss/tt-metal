@@ -189,6 +189,9 @@ tt::tt_metal::ProgramDescriptor RingJointSDPAProgramFactory::create_descriptor(
     const uint32_t DHt = DH / tt::constants::TILE_WIDTH;
     const uint32_t vDHt = vDH / tt::constants::TILE_WIDTH;
     const uint32_t logical_nt = tt::div_up(static_cast<uint32_t>(args.logical_n), tt::constants::TILE_HEIGHT);
+    const bool kv_pad_rotation_enabled = args.has_kv_pad_rotation();
+    const uint32_t kv_actual_nt = kv_pad_rotation_enabled ? args.kv_actual_isl.value() / tt::constants::TILE_HEIGHT : 0;
+    const uint32_t new_actual_nt = kv_pad_rotation_enabled ? logical_nt - kv_actual_nt : 0;
 
     /*
     For non-causal case we must provide a padded mask if the K sequence length has been padded
@@ -504,6 +507,9 @@ tt::tt_metal::ProgramDescriptor RingJointSDPAProgramFactory::create_descriptor(
         num_active_cores,
         chunk_size_t,
         static_cast<uint32_t>(indexed_kv_cache),
+        static_cast<uint32_t>(kv_pad_rotation_enabled),
+        kv_actual_nt,
+        new_actual_nt,
     };
 
     TensorAccessorArgs(input_tensor_q.buffer()).append_to(reader_compile_time_args);
@@ -612,6 +618,9 @@ tt::tt_metal::ProgramDescriptor RingJointSDPAProgramFactory::create_descriptor(
         (std::uint32_t)out_out_subblock_h,
         static_cast<uint32_t>(is_chunked),
         chunk_size_t,
+        static_cast<uint32_t>(kv_pad_rotation_enabled),
+        kv_actual_nt,
+        new_actual_nt,
     };
 
     TensorAccessorArgs(output_tensor.buffer()).append_to(writer_compile_time_args);
@@ -671,7 +680,10 @@ tt::tt_metal::ProgramDescriptor RingJointSDPAProgramFactory::create_descriptor(
         args.is_balanced,
         static_cast<uint32_t>(enable_zigzag_balancing),
         static_cast<uint32_t>(is_chunked),
-        chunk_size_t};
+        chunk_size_t,
+        static_cast<uint32_t>(kv_pad_rotation_enabled),
+        kv_actual_nt,
+        new_actual_nt};
 
     std::map<std::string, std::string> defines;
     defines["STATS_GRANULARITY"] = std::to_string(stats_granularity);

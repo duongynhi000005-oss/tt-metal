@@ -42,13 +42,16 @@ void kernel_main() {
     constexpr uint32_t num_q_readers = get_compile_time_arg_val(25);
     constexpr uint32_t chunk_size_t = get_compile_time_arg_val(26);
     constexpr bool indexed_kv_cache = get_compile_time_arg_val(27) == 1;
+    constexpr bool kv_pad_rotation_enabled = get_compile_time_arg_val(28) == 1;
+    constexpr uint32_t kv_actual_nt = get_compile_time_arg_val(29);
+    constexpr uint32_t new_actual_nt = get_compile_time_arg_val(30);
 
     // Joint-path compile-time gating. When zero, joint Q/K branches are statically dead
     // and dropped by the compiler, eliminating runtime ternaries and joint generator uses.
     constexpr bool has_joint_q = num_joint_q_chunks > 0;
     constexpr bool has_joint_k = num_joint_k_chunks > 0;
 
-    constexpr auto q_args = TensorAccessorArgs<28>();
+    constexpr auto q_args = TensorAccessorArgs<31>();
     constexpr auto k_args = TensorAccessorArgs<q_args.next_compile_time_args_offset()>();
     constexpr auto v_args = TensorAccessorArgs<k_args.next_compile_time_args_offset()>();
     constexpr auto gathered_k_args = TensorAccessorArgs<v_args.next_compile_time_args_offset()>();
@@ -278,7 +281,10 @@ void kernel_main() {
         const uint32_t global_n_tile_id = logical_nt - 1;
         const uint32_t ring_iter_kv_start_tile = ring_id * kv_local_padded_Nt;
         const bool ring_iter_processes_KV_chunks =
-            chunked_enabled ? true : (ring_iter_kv_start_tile <= global_n_tile_id);
+            kv_pad_rotation_enabled
+                ? kv_pad_k_chunk_has_valid_cols(
+                      ring_id, 0, kv_local_padded_Nt, kv_actual_nt, new_actual_nt, ring_size, q_local_padded_Nt)
+                : (chunked_enabled ? true : (ring_iter_kv_start_tile <= global_n_tile_id));
         uint32_t ring_iter_valid_kv_tiles = kv_local_padded_Nt;
         if constexpr (!chunked_enabled) {
             ring_iter_valid_kv_tiles = 0;
@@ -381,7 +387,16 @@ void kernel_main() {
                 const uint32_t kv_global_start_tile =
                     kv_global_tile_for_local<chunked_enabled, kv_local_padded_Nt, chunk_size_t, q_local_padded_Nt>(
                         ring_id, k_chunk * Sk_chunk_t);
-                const bool kv_chunk_is_beyond_logical_n = !kv_chunk_is_joint && (kv_global_start_tile >= logical_nt);
+                const bool kv_chunk_is_beyond_logical_n =
+                    !kv_chunk_is_joint && (kv_pad_rotation_enabled ? !kv_pad_k_chunk_has_valid_cols(
+                                                                         ring_id,
+                                                                         k_chunk * Sk_chunk_t,
+                                                                         Sk_chunk_t,
+                                                                         kv_actual_nt,
+                                                                         new_actual_nt,
+                                                                         ring_size,
+                                                                         q_local_padded_Nt)
+                                                                   : (kv_global_start_tile >= logical_nt));
 
                 if (kv_chunk_is_beyond_logical_n) {
                     // This is a KV chunk on spatial input beyond the logical N, and not joint KV. Skip it.
