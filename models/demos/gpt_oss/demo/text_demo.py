@@ -933,7 +933,9 @@ def test_gpt_oss_demo(
         tt_device_name = "GLX" if tt_device_name == "TG" else tt_device_name  # TG is old nomenclature of 4U galaxy.
         model_name = model_args[0].model_name
         model_device_key = f"{tt_device_name}_{model_name}"
-        sku = {"T3K": "wh_llmbox_perf", "GLX": "wh_galaxy_perf", "P150x8": "bh_loudbox", "BHGLX": "bh_galaxy_perf"}.get(tt_device_name)
+        sku = {"T3K": "wh_llmbox_perf", "GLX": "wh_galaxy_perf", "P150x8": "bh_loudbox", "BHGLX": "bh_galaxy_perf"}.get(
+            tt_device_name
+        )
         targets = {}
         if sku:
             resolved_perf_targets = resolve_perf_targets(
