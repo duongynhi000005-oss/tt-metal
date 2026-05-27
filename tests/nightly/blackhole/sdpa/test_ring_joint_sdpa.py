@@ -796,7 +796,7 @@ def run_ring_joint_sdpa(
 # CHUNKED-PREFILL VALIDATION
 # ============================================================================
 CHUNKED_PREFILL_PER_DEVICE_CHUNK = 640
-CHUNKED_PREFILL_N_CHUNKS = 11  # Last chunk: prefix K = 10 * chunk_size (=25k @ sp=4), current = chunk_size (=2.5k).
+CHUNKED_PREFILL_N_CHUNKS = 7  # Minimal repro for chunked-prefill non-determinism (bug exposed at chunk 6, q=96/k=256). See sdpa_chunked_determinism_bug.md.
 CHUNKED_PREFILL_CHUNK_SIZE = CHUNKED_PREFILL_PER_DEVICE_CHUNK * MESH_CONFIG.sp_size
 CHUNKED_PREFILL_TOTAL_SEQ = CHUNKED_PREFILL_CHUNK_SIZE * CHUNKED_PREFILL_N_CHUNKS
 CHUNKED_PREFILL_PCC_THRESHOLD = 0.99
@@ -1646,7 +1646,7 @@ CHUNKED_PREFILL_MODEL_CONFIGS = {
         q_dtype=ttnn.bfloat16,
         kv_dtype=ttnn.bfloat8_b,
         q_chunk_sizes=[96],
-        k_chunk_sizes=[128, 256, 320],
+        k_chunk_sizes=[256],
         seq_len=CHUNKED_PREFILL_CHUNK_SIZE,  # unused by chunked path
     ),
 }
@@ -1705,7 +1705,7 @@ def test_ring_joint_attention_sdpa_chunked_determinism(model_name, q_chunk_size,
         chunk_size=chunk_size,
         q_chunk_size=q_chunk_size,
         k_chunk_size=k_chunk_size,
-        num_iterations=3,
+        num_iterations=2,
     )
 
 
