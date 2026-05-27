@@ -426,13 +426,10 @@ void relay_to_next_cb(uintptr_t data_ptr, uint64_t wlength) {
             dispatch_h_cb_writer.acquire_pages(1);
 
             uint32_t xfer_size;
-            bool not_end_of_cmd;
             if (length > dispatch_cb_page_size) {
                 xfer_size = dispatch_cb_page_size;
-                not_end_of_cmd = true;
             } else {
                 xfer_size = length;
-                not_end_of_cmd = false;
             }
             length -= xfer_size;
 
@@ -1309,7 +1306,8 @@ re_run_command:
             // cmd->set_write_offset.offset1,
             //              cmd->set_write_offset.offset2, cmd->set_write_offset.program_host_id);
             DeviceTimestampedData("runtime_host_id_dispatch", cmd->set_write_offset.program_host_id);
-            if (rt_profiler_msg->realtime_profiler_core_noc_xy != 0) {
+            if (rt_profiler_msg->realtime_profiler_core_noc_xy != 0 &&
+                cmd->set_write_offset.program_host_id != REALTIME_PROFILER_UNPROFILED_PROGRAM_HOST_ID) {
                 while (!program_id_fifo_append(rt_profiler_msg, cmd->set_write_offset.program_host_id)) {
                     invalidate_l1_cache();
                 }
