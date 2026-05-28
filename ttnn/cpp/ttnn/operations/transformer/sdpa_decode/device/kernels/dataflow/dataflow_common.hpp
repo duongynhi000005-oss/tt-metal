@@ -442,7 +442,7 @@ uint32_t write_partial_tiles_to_memory(
             uint32_t l1_read_addr_head = l1_base_addr + tile_index * tile_bytes + in_tile_offset;
 
             // DRAM tile: global index = out_tile_id + tile_index
-            uint64_t out_writer_tile_addr = get_noc_addr(out_tile_id + tile_index, out_writer);
+            uint64_t out_writer_tile_addr = out_writer.get_noc_addr(out_tile_id + tile_index);
             uint64_t out_writer_noc_addr_head = out_writer_tile_addr + in_tile_offset;
 
             // Write first phase

@@ -9,9 +9,6 @@
 #include "api/compute/bcast.h"
 #include "api/compute/matmul.h"
 
-ALWI void ACQ() { acquire_dst(); }
-ALWI void REL() { release_dst(); }
-
 void kernel_main() {
     uint32_t argrt = 0;
     uint32_t batch_start = get_arg_val<uint32_t>(argrt++);
@@ -71,33 +68,45 @@ void kernel_main() {
 
                 // // rotated = x @ trans_mat
                 mm_init_short(in_cb, trans_mat_cb);
-                ACQ();
+                tile_regs_acquire();
                 for (uint32_t j = 0; j < Wt; ++j) {
                     matmul_tiles(in_cb, trans_mat_cb, j, in1_index, j);
+                }
+                tile_regs_commit();
+                tile_regs_wait();
+                for (uint32_t j = 0; j < Wt; ++j) {
                     pack_tile(j, rotated_in_interm_cb, j);
                 }
-                REL();
+                tile_regs_release();
                 cb_push_back(rotated_in_interm_cb, Wt);
                 cb_wait_front(rotated_in_interm_cb, Wt);
 
                 mul_tiles_init(rotated_in_interm_cb, sin_cb);
-                ACQ();
+                tile_regs_acquire();
                 for (uint32_t j = 0; j < Wt; ++j) {
                     // sin_interim = rotated * sin
                     mul_tiles(rotated_in_interm_cb, sin_cb, j, j + (sin_cos_row_cnt * Wt), j);
+                }
+                tile_regs_commit();
+                tile_regs_wait();
+                for (uint32_t j = 0; j < Wt; ++j) {
                     pack_tile(j, sin_interm_cb, j);
                 }
-                REL();
+                tile_regs_release();
                 cb_push_back(sin_interm_cb, Wt);
                 cb_pop_front(rotated_in_interm_cb, Wt);
 
-                ACQ();
+                tile_regs_acquire();
                 for (uint32_t j = 0; j < Wt; ++j) {
                     // cos_interim = x * cos
                     mul_tiles(in_cb, cos_cb, j, j + (sin_cos_row_cnt * Wt), j);
+                }
+                tile_regs_commit();
+                tile_regs_wait();
+                for (uint32_t j = 0; j < Wt; ++j) {
                     pack_tile(j, cos_interm_cb, j);
                 }
-                REL();
+                tile_regs_release();
                 cb_push_back(cos_interm_cb, Wt);
                 cb_pop_front(in_cb, Wt);  // Done with input
 #if RELOAD_IMPL == 1
@@ -108,13 +117,17 @@ void kernel_main() {
                 cb_wait_front(sin_interm_cb, Wt);
                 cb_wait_front(cos_interm_cb, Wt);
                 add_tiles_init(cos_interm_cb, sin_interm_cb);
-                ACQ();
+                tile_regs_acquire();
                 for (uint32_t j = 0; j < Wt; ++j) {
                     // out = cos_interim + sin_interim
                     add_tiles(cos_interm_cb, sin_interm_cb, j, j, j);
+                }
+                tile_regs_commit();
+                tile_regs_wait();
+                for (uint32_t j = 0; j < Wt; ++j) {
                     pack_tile(j, out_cb, j);
                 }
-                REL();
+                tile_regs_release();
                 cb_push_back(out_cb, Wt);
                 cb_pop_front(sin_interm_cb, Wt);
                 cb_pop_front(cos_interm_cb, Wt);
