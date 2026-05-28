@@ -16,11 +16,9 @@ void kernel_main() {
     const uint32_t tile_height = get_compile_time_arg_val(4);
     constexpr auto src_args = TensorAccessorArgs<5>();
     constexpr auto start_args = TensorAccessorArgs<src_args.next_compile_time_args_offset()>();
-    constexpr auto end_args = TensorAccessorArgs<start_args.next_compile_time_args_offset()>();
 
     const uint32_t src_addr = get_common_arg_val<uint32_t>(0);
     const uint32_t start_addr = get_common_arg_val<uint32_t>(1);
-    const uint32_t end_addr = get_common_arg_val<uint32_t>(2);
 
     volatile tt_l1_ptr uint32_t* num_unpadded_tiles = (volatile tt_l1_ptr uint32_t*)(get_common_arg_addr(3));
     volatile tt_l1_ptr uint32_t* num_padded_tiles = num_unpadded_tiles + num_dims;
@@ -40,15 +38,12 @@ void kernel_main() {
     // Get tile size from CB interface
     const uint32_t tile_size = cb_in0.get_tile_size();
 
-    // Create TensorAccessors for start and end tensors
+    // Only start indices are needed here; num_tiles already determines the slice extent.
     const auto start_tensor_accessor = TensorAccessor(start_args, start_addr);
-    const auto end_tensor_accessor = TensorAccessor(end_args, end_addr);
 
-    // Read start and end indices from tensors using TensorAccessor
+    // Read start tensor data using TensorAccessor.
     uint32_t start_indices[num_dims];
-    uint32_t end_indices[num_dims];
 
-    // Read start tensor data using separate circular buffer
     cb_tensor.reserve_back(1);
     uint32_t start_buffer_l1_addr = cb_tensor.get_write_ptr();
     noc.async_read(start_tensor_accessor, cb_tensor, tile_size, {.page_id = 0}, {.offset_bytes = 0});
@@ -58,19 +53,6 @@ void kernel_main() {
 
     for (uint32_t i = 0; i < num_dims; i++) {
         start_indices[i] = start_data[i];
-    }
-    cb_tensor.pop_front(1);
-
-    // Read end tensor data using separate circular buffer
-    cb_tensor.reserve_back(1);
-    uint32_t end_buffer_l1_addr = cb_tensor.get_write_ptr();
-    noc.async_read(end_tensor_accessor, cb_tensor, tile_size, {.page_id = 0}, {.offset_bytes = 0});
-    noc.async_read_barrier();
-
-    volatile tt_l1_ptr uint32_t* end_data = (volatile tt_l1_ptr uint32_t*)end_buffer_l1_addr;
-
-    for (uint32_t i = 0; i < num_dims; i++) {
-        end_indices[i] = end_data[i];
     }
     cb_tensor.pop_front(1);
 

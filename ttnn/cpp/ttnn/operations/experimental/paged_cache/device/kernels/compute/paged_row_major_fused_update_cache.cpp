@@ -18,12 +18,7 @@ void kernel_main() {
     }
     const bool is_input1 = get_arg_val<uint32_t>(rt_args_idx++);
 
-    constexpr uint32_t in1_cb = get_compile_time_arg_val(0);
-    constexpr uint32_t in2_cb = get_compile_time_arg_val(1);
-    uint32_t in_cb = in1_cb;
-    if (!is_input1) {
-        in_cb = in2_cb;
-    }
+    (void)is_input1;
 
     constexpr uint32_t cache_cb = get_compile_time_arg_val(2);
     constexpr uint32_t untilized_cache_cb = get_compile_time_arg_val(3);
