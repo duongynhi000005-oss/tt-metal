@@ -672,7 +672,10 @@ bool run_sfpu_binary_two_input_buffer(
         };
         vector<uint32_t> writer_rt_args = {
             output_dram_buffer->address(), 0u, static_cast<uint32_t>(test_config.num_tiles)};
-        vector<uint32_t> compute_rt_args = {1u, static_cast<uint32_t>(test_config.num_tiles), 0u};
+        vector<uint32_t> compute_kernel_args = {
+            1u,                                            // per_core_block_cnt
+            static_cast<uint32_t>(test_config.num_tiles),  // per_core_block_dim
+        };
 
         for (const CoreRange& core_range : test_config.cores.ranges()) {
             tt_metal::CircularBufferConfig l1_input0_cb_config =
@@ -702,19 +705,19 @@ bool run_sfpu_binary_two_input_buffer(
 
             auto writer_kernel = create_legacy_writer_kernel(program_, test_config);
 
-            auto compute_kernel = tt_metal::CreateKernel(
+            tt_metal::CreateKernel(
                 program_,
                 "tt_metal/kernels/compute/eltwise_sfpu.cpp",
                 test_config.cores,
                 tt_metal::ComputeConfig{
                     .math_approx_mode = test_config.approx_mode,
+                    .compile_args = compute_kernel_args,
                     .defines = sfpu_defines,
                 });
 
             for (const CoreCoord& core_coord : core_range) {
                 SetRuntimeArgs(program_, reader_kernel, core_coord, reader_rt_args);
                 SetRuntimeArgs(program_, writer_kernel, core_coord, writer_rt_args);
-                SetRuntimeArgs(program_, compute_kernel, core_coord, compute_rt_args);
             }
         }
 
