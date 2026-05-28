@@ -61,7 +61,7 @@ ProgramDescriptor MatmulMultiCoreReuseProgramFactory::create_descriptor(
     TT_FATAL(Nt % per_core_N == 0, "Nt ({}) must be divisible by per_core_N ({})", Nt, per_core_N);
     TT_FATAL(Kt % in0_block_w == 0, "Kt ({}) must be divisible by in0_block_w ({})", Kt, in0_block_w);
 
-    tt_metal::IDevice* device = &a.device_mut();
+    tt_metal::IDevice* device = &a.mutable_device();
     auto compute_with_storage_grid_size = device->compute_with_storage_grid_size();
     uint32_t num_cores_x = compute_with_storage_grid_size.x;
     uint32_t num_cores_y = compute_with_storage_grid_size.y;
